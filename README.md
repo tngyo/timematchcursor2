@@ -1,4 +1,4 @@
-# TimeMatch
+# TimeMatch 2
 
 A web app to help people from different countries find perfect meeting times using Svelte 5 and Bulma CSS.
 
