@@ -1,24 +1,43 @@
 import { convertTime } from './timezones.js';
 
-// Convert time to minutes from midnight in UTC
+// Convert time to UTC minutes (simple conversion without day boundaries)
 function timeToUTCMinutes(time, offset, day) {
+  // Handle invalid inputs
+  if (!time || offset === null || offset === undefined || isNaN(offset)) {
+    return { minutes: 0, day: day || 'Monday' };
+  }
+  
   const [hours, minutes, period] = parseTime(time);
   let totalMinutes = hours * 60 + minutes;
   if (period === 'PM' && hours !== 12) totalMinutes += 12 * 60;
   if (period === 'AM' && hours === 12) totalMinutes -= 12 * 60;
   
-  // Convert to UTC by subtracting offset
+  // Convert to UTC by subtracting offset (allow negative values)
   totalMinutes -= offset * 60;
-  
-  // Normalize to 0-1440 range (24 hours)
-  while (totalMinutes < 0) totalMinutes += 24 * 60;
-  while (totalMinutes >= 24 * 60) totalMinutes -= 24 * 60;
   
   return { minutes: totalMinutes, day };
 }
 
+function getNextDay(day) {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const currentIndex = days.indexOf(day);
+  return days[(currentIndex + 1) % 7];
+}
+
+function getPreviousDay(day) {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const currentIndex = days.indexOf(day);
+  return days[(currentIndex - 1 + 7) % 7];
+}
+
 // Convert UTC minutes back to local time string
 function utcMinutesToTime(utcMinutes, offset) {
+  // Handle invalid inputs
+  if (utcMinutes === null || utcMinutes === undefined || isNaN(utcMinutes) ||
+      offset === null || offset === undefined || isNaN(offset)) {
+    return '12:00 AM'; // Default to midnight
+  }
+  
   // Convert UTC to local by adding offset
   let localMinutes = utcMinutes + (offset * 60);
   
@@ -42,36 +61,101 @@ function parseTime(time) {
 
 // Check if two time slots overlap (same moment in time)
 function slotsOverlap(slot1, offset1, slot2, offset2) {
-  const utc1 = timeToUTCMinutes(slot1.start, offset1, slot1.day);
-  const utc2 = timeToUTCMinutes(slot2.start, offset2, slot2.day);
+  const utc1 = timeRangeToUTC(slot1.start, slot1.end, offset1, slot1.day);
+  const utc2 = timeRangeToUTC(slot2.start, slot2.end, offset2, slot2.day);
   
-  // For now, match exact same UTC time (can be extended to check ranges)
-  return utc1.minutes === utc2.minutes && utc1.day === utc2.day;
+  // Check if ranges overlap
+  return rangesOverlap(utc1, utc2);
 }
 
-// Convert time range to UTC minutes (start and end)
-function timeRangeToUTC(startTime, endTime, offset, day) {
+export function timeRangeToUTC(startTime, endTime, offset, day) {
   const startUTC = timeToUTCMinutes(startTime, offset, day);
   const endUTC = timeToUTCMinutes(endTime, offset, day);
   
-  // Handle end time that wraps to next day
-  if (endUTC.minutes < startUTC.minutes) {
-    endUTC.minutes += 24 * 60;
+  // For simplicity, assume all times are on the same conceptual day
+  // Handle end time that might be before start time (crosses midnight)
+  let endMinutes = endUTC.minutes;
+  let startMinutes = startUTC.minutes;
+  
+  if (endMinutes < startMinutes) {
+    // End time is on the next day
+    endMinutes += 24 * 60;
   }
   
-  return { start: startUTC.minutes, end: endUTC.minutes, day: startUTC.day };
+  return { start: startMinutes, end: endMinutes, day: startUTC.day };
 }
 
-// Check if two time ranges overlap in UTC
-function rangesOverlap(range1, range2) {
-  return range1.day === range2.day && 
-         range1.start < range2.end && 
-         range2.start < range1.end;
+function isNextDay(day, referenceDay) {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  const dayIndex = days.indexOf(day);
+  const refIndex = days.indexOf(referenceDay);
+  return (dayIndex === (refIndex + 1) % 7);
+}
+
+export function rangesOverlap(range1, range2) {
+  // Handle ranges that might have negative start times
+  // Normalize ranges to handle cross-day scenarios
+  
+  // If both ranges have negative starts, adjust them
+  let adjRange1 = { ...range1 };
+  let adjRange2 = { ...range2 };
+  
+  // Handle negative start times by adding 24*60
+  if (adjRange1.start < 0) {
+    adjRange1.start += 24 * 60;
+    adjRange1.end += 24 * 60;
+  }
+  if (adjRange2.start < 0) {
+    adjRange2.start += 24 * 60;
+    adjRange2.end += 24 * 60;
+  }
+  
+  // Now check for overlap
+  return adjRange1.start < adjRange2.end && adjRange2.start < adjRange1.end;
+}
+
+export function getDayIndex(day) {
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+  return days.indexOf(day);
+}
+
+export function calculateOverlap(range1, range2) {
+  if (!rangesOverlap(range1, range2)) {
+    return null;
+  }
+  
+  // Handle ranges that might have negative start times
+  let adjRange1 = { ...range1 };
+  let adjRange2 = { ...range2 };
+  
+  // Handle negative start times by adding 24*60
+  if (adjRange1.start < 0) {
+    adjRange1.start += 24 * 60;
+    adjRange1.end += 24 * 60;
+  }
+  if (adjRange2.start < 0) {
+    adjRange2.start += 24 * 60;
+    adjRange2.end += 24 * 60;
+  }
+  
+  // Calculate intersection of adjusted ranges
+  const overlapStart = Math.max(adjRange1.start, adjRange2.start);
+  const overlapEnd = Math.min(adjRange1.end, adjRange2.end);
+  
+  if (overlapStart >= overlapEnd) {
+    return null; // No actual overlap
+  }
+  
+  return {
+    start: overlapStart,
+    end: overlapEnd,
+    day: range1.day
+  };
 }
 
 export function findMatches(participants) {
   const matches = [];
-  const validParticipants = participants.filter(p => 
+  const validParticipants = participants.filter(p =>
     p.name && p.city && p.timeslots && p.timeslots.length > 0
   );
   
@@ -80,8 +164,9 @@ export function findMatches(participants) {
   // Collect all time slots with their UTC ranges
   const allSlots = [];
   validParticipants.forEach(participant => {
+    const offset = participant.offset || participant.timezone_offset || 0; // Handle both property names
     participant.timeslots.forEach(slot => {
-      const utcRange = timeRangeToUTC(slot.start, slot.end, participant.offset, slot.day);
+      const utcRange = timeRangeToUTC(slot.start, slot.end, offset, slot.day);
       allSlots.push({
         slot,
         participant,
@@ -119,7 +204,15 @@ export function findMatches(participants) {
   slotGroups.forEach((group) => {
     if (group.length === 0) return;
     
-    const firstItem = group[0];
+    // Calculate the actual overlap time range
+    let overlapRange = group[0].utcRange;
+    for (let i = 1; i < group.length; i++) {
+      overlapRange = calculateOverlap(overlapRange, group[i].utcRange);
+      if (!overlapRange) break; // No overlap found
+    }
+    
+    if (!overlapRange) return;
+    
     const available = [];
     const unavailable = [];
     
@@ -133,44 +226,33 @@ export function findMatches(participants) {
           name: participant.name,
           city: participant.city,
           timezone: participant.timezone,
-          offset: participant.offset,
-          localTime: item.slot.start
+          offset: participant.offset || participant.timezone_offset || 0,
+          localStartTime: utcMinutesToTime(overlapRange.start, participant.offset || participant.timezone_offset || 0),
+          localEndTime: utcMinutesToTime(overlapRange.end, participant.offset || participant.timezone_offset || 0),
+          originalStart: item.slot.start,
+          originalEnd: item.slot.end
         });
       } else {
         unavailable.push({
           name: participant.name,
           city: participant.city,
           timezone: participant.timezone,
-          offset: participant.offset
+          offset: participant.offset || participant.timezone_offset || 0
         });
       }
     });
     
     if (available.length > 0) {
-      // Calculate the overlapping UTC time range
-      let overlapStart = Math.max(...group.map(item => item.utcRange.start));
-      let overlapEnd = Math.min(...group.map(item => item.utcRange.end));
-      
-      // Convert overlapping range to each participant's local time
-      const overlappingRanges = available.map(person => {
-        const participant = validParticipants.find(p => p.name === person.name);
-        return {
-          ...person,
-          overlapStart: utcMinutesToTime(overlapStart, participant.offset),
-          overlapEnd: utcMinutesToTime(overlapEnd, participant.offset)
-        };
-      });
-      
       matches.push({
-        day: firstItem.slot.day,
-        start: firstItem.slot.start,
-        end: firstItem.slot.end,
-        available: overlappingRanges,
+        day: group[0].slot.day,
+        utcStart: utcMinutesToTime(overlapRange.start, 0), // UTC time
+        utcEnd: utcMinutesToTime(overlapRange.end, 0), // UTC time
+        start: utcMinutesToTime(overlapRange.start, group[0].participant.offset || group[0].participant.timezone_offset || 0),
+        end: utcMinutesToTime(overlapRange.end, group[0].participant.offset || group[0].participant.timezone_offset || 0),
+        available: available,
         unavailable,
         matchCount: available.length,
-        totalCount: validParticipants.length,
-        overlapStartUTC: overlapStart,
-        overlapEndUTC: overlapEnd
+        totalCount: validParticipants.length
       });
     }
   });

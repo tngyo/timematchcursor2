@@ -34,6 +34,11 @@ export const cities = [
 ];
 
 export function getOffsetLabel(offset) {
+  // Handle invalid offset values
+  if (offset === null || offset === undefined || isNaN(offset)) {
+    return 'GMT+0'; // Default to UTC
+  }
+  
   if (offset === 0) return 'GMT+0';
   const sign = offset > 0 ? '+' : '';
   const hours = Math.floor(Math.abs(offset));

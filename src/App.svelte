@@ -1,109 +1,168 @@
 <script>
-  import { supabase } from './lib/supabase.js';
+  import { onMount } from 'svelte';
+  import Auth from './components/Auth.svelte';
   import ParticipantCard from './components/ParticipantCard.svelte';
   import MatchResults from './components/MatchResults.svelte';
   
-  let participants = $state([
-    { name: '', city: '', timezone: '', offset: 0, timeslots: [] }
-  ]);
+  import { authStore, initAuth, signOut, clearAuthError } from './lib/authStore.js';
+  import { createMeeting, getMeeting, getParticipants, saveParticipant, removeParticipant, getUserParticipation } from './lib/dbOperations.js';
   
+  let authState = $state({ user: null, loading: true, initialized: false, error: null, session: null });
+  let currentParticipant = $state(null);
   let meetingName = $state('');
   let meetingId = $state(null);
   let savedMeetingId = $state(null);
+  let allParticipants = $state([]);
   let copySuccess = $state(false);
   let shareDropdownOpen = $state(false);
   let shareLinkCopied = $state(false);
+  let loading = $state(false);
+  let authError = $state('');
+  let meetingError = $state('');
   
-  function addParticipant() {
-    participants = [...participants, { name: '', city: '', timezone: '', offset: 0, timeslots: [] }];
-  }
+  // Subscribe to auth store
+  $effect(() => {
+    const unsubscribe = authStore.subscribe(state => {
+      authState = state;
+      authError = state.error || '';
+    });
+    return unsubscribe;
+  });
   
-  function updateParticipant(index, updated) {
-    participants = participants.map((p, i) => i === index ? updated : p);
-  }
+  onMount(async () => {
+    await initAuth();
+  });
   
-  function removeParticipant(index) {
-    participants = participants.filter((_, i) => i !== index);
-    if (participants.length === 0) {
-      participants = [{ name: '', city: '', timezone: '', offset: 0, timeslots: [] }];
+  function handleAuthSuccess(user) {
+    clearLocalAuthError();
+    if (meetingId) {
+      loadMeetingAndParticipant();
     }
   }
   
-  async function saveMeeting() {
+  async function handleSignOut() {
+    try {
+      await signOut();
+      // Reset local state
+      currentParticipant = null;
+      meetingName = '';
+      savedMeetingId = null;
+      allParticipants = [];
+      meetingError = '';
+      clearLocalAuthError();
+    } catch (error) {
+      console.error('Sign out error:', error);
+    }
+  }
+  
+  function handleAuthError(error) {
+    authError = error;
+    setTimeout(() => {
+      authError = '';
+    }, 5000);
+  }
+  
+  function clearLocalAuthError() {
+    authError = '';
+  }
+  
+  async function loadMeetingAndParticipant() {
+    if (!meetingId || !authState.user) return;
+    
+    try {
+      loading = true;
+      meetingError = '';
+      
+      // Load meeting details
+      const meeting = await getMeeting(meetingId);
+      meetingName = meeting.meeting_name || '';
+      
+      // Load all participants
+      allParticipants = await getParticipants(meetingId);
+      
+      // Check if current user is a participant
+      const userParticipation = await getUserParticipation(meetingId);
+      currentParticipant = userParticipation ? {
+        name: userParticipation.name,
+        city: userParticipation.city,
+        timezone: userParticipation.timezone,
+        offset: userParticipation.timezone_offset,
+        timeslots: userParticipation.timeslots || []
+      } : null;
+      
+    } catch (error) {
+      console.error('Error loading meeting:', error);
+      meetingError = error.message;
+      // Clear meeting data on error
+      meetingName = '';
+      allParticipants = [];
+      currentParticipant = null;
+    } finally {
+      loading = false;
+    }
+  }
+  
+  async function createNewMeeting() {
+    if (!authState.user) {
+      alert('Please sign in to create meetings');
+      return;
+    }
+    
     if (!meetingName.trim()) {
       alert('Please enter a meeting name');
       return;
     }
     
-    const validParticipants = participants.filter(p => 
-      p.name.trim() && p.city && p.timeslots.length > 0
-    );
-    
-    if (validParticipants.length < 1) {
-      alert('Please add at least 1 participant with timeslots');
-      return;
-    }
-    
-    // Try with 'meeting_name' first, fallback to 'name'
-    // Don't include id - let database generate it
-    let insertData = {
-      meeting_name: meetingName,
-      participants: validParticipants
-      // created_at will use database default if not provided
-    };
-    
-    let { data, error } = await supabase
-      .from('meetings')
-      .insert(insertData)
-      .select()
-      .single();
-    
-    // If that fails, try with 'name' column
-    if (error && error.message.includes('name')) {
-      insertData = {
-        name: meetingName,
-        participants: validParticipants
-        // created_at will use database default if not provided
-      };
-      const result = await supabase
-        .from('meetings')
-        .insert(insertData)
-        .select()
-        .single();
-      data = result.data;
-      error = result.error;
-    }
-    
-    if (error) {
-      console.error('Error saving meeting:', error);
-      const errorMsg = `Error saving meeting: ${error.message}\n\n` +
-        `The 'meetings' table is missing required columns.\n\n` +
-        `Please run the SQL in supabase_setup.sql in your Supabase SQL Editor to create/update the table structure.`;
-      alert(errorMsg);
-      savedMeetingId = null;
-    } else {
-      meetingId = data.id;
-      savedMeetingId = data.id;
-      copySuccess = false;
+    try {
+      loading = true;
+      
+      const meeting = await createMeeting(meetingName, []);
+      meetingId = meeting.id;
+      savedMeetingId = meeting.id;
+      meetingError = '';
+      
+      // Create participant entry for the creator
+      if (currentParticipant && currentParticipant.name && currentParticipant.city && currentParticipant.timeslots.length > 0) {
+        await saveParticipant(meetingId, currentParticipant);
+        allParticipants = await getParticipants(meetingId);
+      }
+      
+    } catch (error) {
+      console.error('Error creating meeting:', error);
+      alert('Error creating meeting: ' + error.message);
+    } finally {
+      loading = false;
     }
   }
   
-  async function loadMeeting() {
+  async function loadMeetingById() {
     if (!meetingId) return;
+    await loadMeetingAndParticipant();
+  }
+  
+  async function updateMyParticipant(updatedParticipant) {
+    if (!meetingId || !authState.user) return;
     
-    const { data, error } = await supabase
-      .from('meetings')
-      .select('*')
-      .eq('id', meetingId)
-      .single();
+    try {
+      currentParticipant = updatedParticipant;
+      await saveParticipant(meetingId, updatedParticipant);
+      allParticipants = await getParticipants(meetingId);
+    } catch (error) {
+      console.error('Error updating participant:', error);
+      alert('Error updating your information: ' + error.message);
+    }
+  }
+  
+  async function removeMyParticipation() {
+    if (!meetingId || !authState.user) return;
     
-    if (error) {
-      console.error('Error loading meeting:', error);
-      alert('Error loading meeting: ' + error.message);
-    } else if (data) {
-      meetingName = data.meeting_name || data.name || '';
-      participants = data.participants || [{ name: '', city: '', timezone: '', offset: 0, timeslots: [] }];
-      savedMeetingId = null;
+    try {
+      await removeParticipant(meetingId);
+      currentParticipant = null;
+      allParticipants = await getParticipants(meetingId);
+    } catch (error) {
+      console.error('Error removing participation:', error);
+      alert('Error removing your participation: ' + error.message);
     }
   }
   
@@ -161,13 +220,11 @@
         await navigator.share(shareData);
         shareDropdownOpen = false;
       } else {
-        // Fallback to copy if Web Share API not available
         await copyShareLink();
       }
     } catch (err) {
       if (err.name !== 'AbortError') {
         console.error('Failed to share:', err);
-        // Fallback to copy
         await copyShareLink();
       }
     }
@@ -175,16 +232,24 @@
   
   // Load meeting from URL parameter on mount
   function loadMeetingFromURL() {
+    if (authState.loading) return;
+    
     const urlParams = new URLSearchParams(window.location.search);
     const meetingParam = urlParams.get('meeting');
-    if (meetingParam && !meetingId && !savedMeetingId) {
+    if (meetingParam && !meetingId) {
       meetingId = meetingParam;
-      loadMeeting();
+      if (authState.user) {
+        loadMeetingAndParticipant();
+      }
     }
   }
   
-  // Call on mount
-  loadMeetingFromURL();
+  // Effect to load meeting when auth is ready
+  $effect(() => {
+    if (authState.initialized && !authState.loading) {
+      loadMeetingFromURL();
+    }
+  });
   
   // Close dropdown when clicking outside
   function handleClickOutside(event) {
@@ -203,121 +268,201 @@
   <h1 class="title is-1 has-text-centered">TimeMatch</h1>
   <p class="subtitle has-text-centered">Find perfect meeting times across timezones</p>
   
-  <div class="box mb-5">
-    <div class="field is-grouped">
-      <div class="control is-expanded">
-        <input 
-          class="input" 
-          type="text" 
-          placeholder="Meeting name"
-          bind:value={meetingName}
-        />
-      </div>
-      <div class="control">
-        <button class="button is-primary" onclick={(e) => { e.preventDefault(); saveMeeting(); }}>Save Meeting</button>
-      </div>
-      <div class="control">
-        <input 
-          class="input" 
-          type="text" 
-          placeholder="Meeting ID to load"
-          bind:value={meetingId}
-        />
-      </div>
-      <div class="control">
-        <button class="button" onclick={(e) => { e.preventDefault(); loadMeeting(); }}>Load Meeting</button>
-      </div>
+  {#if authState.loading}
+    <div class="has-text-centered">
+      <span class="icon">
+        <i class="fas fa-spinner fa-spin"></i>
+      </span>
+      <span>Loading...</span>
     </div>
-    
-    {#if savedMeetingId || meetingId}
-      <div class="notification is-success is-light mt-4">
-        <div class="is-flex is-align-items-center is-flex-wrap-wrap" style="gap: 0.5rem;">
-          <span><strong>Meeting ID:</strong></span>
-          <code style="user-select: all;">{savedMeetingId || meetingId}</code>
-          <button 
-            class="button is-small is-light"
-            class:is-success={copySuccess}
-            onclick={(e) => { e.preventDefault(); copyMeetingId(); }}
-          >
-            {copySuccess ? '✓ Copied!' : 'Copy ID'}
-          </button>
-          
-          <div class="dropdown" class:is-active={shareDropdownOpen} style="position: relative;">
-            <div class="dropdown-trigger">
-              <button 
-                class="button is-small is-info"
-                onclick={(e) => { e.preventDefault(); e.stopPropagation(); shareDropdownOpen = !shareDropdownOpen; }}
-                aria-haspopup="true"
-                aria-controls="share-menu"
-              >
-                <span>🔗 Share Meeting</span>
-                <span>▼</span>
-              </button>
+  {:else if !authState.user}
+    <Auth onAuthSuccess={handleAuthSuccess} />
+  {:else}
+    <!-- User is authenticated -->
+    <div class="box mb-5">
+      <div class="level">
+        <div class="level-left">
+          <div class="level-item">
+            <div>
+              <p class="heading">Signed in as</p>
+              <p class="title is-6">{authState.user.email}</p>
             </div>
-            <div class="dropdown-menu" id="share-menu" role="menu" tabindex="0" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
-              <div class="dropdown-content">
+          </div>
+        </div>
+        <div class="level-right">
+          <div class="level-item">
+            <button class="button is-light" onclick={handleSignOut}>
+              Sign Out
+            </button>
+          </div>
+        </div>
+      </div>
+      
+      <div class="field is-grouped">
+        <div class="control is-expanded">
+          <input 
+            class="input" 
+            type="text" 
+            placeholder="Meeting name"
+            bind:value={meetingName}
+            disabled={loading}
+          />
+        </div>
+        <div class="control">
+          <button 
+            class="button is-primary" 
+            onclick={(e) => { e.preventDefault(); createNewMeeting(); }}
+            disabled={loading}
+          >
+            {loading ? 'Creating...' : 'Create Meeting'}
+          </button>
+        </div>
+        <div class="control">
+          <input 
+            class="input" 
+            type="text" 
+            placeholder="Enter Meeting ID"
+            bind:value={meetingId}
+            disabled={loading}
+          />
+        </div>
+        <div class="control">
+          <button 
+            class="button" 
+            onclick={(e) => { e.preventDefault(); loadMeetingById(); }}
+            disabled={loading || !meetingId}
+          >
+            Load Meeting ID
+          </button>
+        </div>
+      </div>
+      
+      {#if meetingError}
+        <div class="notification is-danger is-light">
+          <button class="delete" onclick={() => meetingError = ''}></button>
+          <strong>Error:</strong> {meetingError}
+        </div>
+      {/if}
+      
+      {#if savedMeetingId || meetingId}
+        <div class="notification is-success is-light mt-4">
+          <div class="is-flex is-align-items-center is-flex-wrap-wrap" style="gap: 0.5rem;">
+            <span><strong>Meeting ID:</strong></span>
+            <code style="user-select: all;">{savedMeetingId || meetingId}</code>
+            <button 
+              class="button is-small is-light"
+              class:is-success={copySuccess}
+              onclick={(e) => { e.preventDefault(); copyMeetingId(); }}
+            >
+              {copySuccess ? '✓ Copied!' : 'Copy ID'}
+            </button>
+            
+            <div class="dropdown" class:is-active={shareDropdownOpen} style="position: relative;">
+              <div class="dropdown-trigger">
                 <button 
-                  type="button"
-                  class="dropdown-item" 
-                  onclick={(e) => { e.preventDefault(); copyShareLink(); }}
+                  class="button is-small is-info"
+                  onclick={(e) => { e.preventDefault(); e.stopPropagation(); shareDropdownOpen = !shareDropdownOpen; }}
+                  aria-haspopup="true"
+                  aria-controls="share-menu"
                 >
-                  {shareLinkCopied ? '✓ Link Copied!' : '📋 Copy Link'}
+                  <span>🔗 Share Meeting</span>
+                  <span>▼</span>
                 </button>
-                <button 
-                  type="button"
-                  class="dropdown-item" 
-                  onclick={(e) => { e.preventDefault(); shareLink(); }}
-                >
-                  📤 Share via...
-                </button>
-                <hr class="dropdown-divider">
-                <div class="dropdown-item">
-                  <small class="has-text-grey">
-                    Share this link to let others add their availability
-                  </small>
+              </div>
+              <div class="dropdown-menu" id="share-menu" role="menu" tabindex="0" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()}>
+                <div class="dropdown-content">
+                  <button 
+                    type="button"
+                    class="dropdown-item" 
+                    onclick={(e) => { e.preventDefault(); copyShareLink(); }}
+                  >
+                    {shareLinkCopied ? '✓ Link Copied!' : '📋 Copy Link'}
+                  </button>
+                  <button 
+                    type="button"
+                    class="dropdown-item" 
+                    onclick={(e) => { e.preventDefault(); shareLink(); }}
+                  >
+                    📤 Share via...
+                  </button>
+                  <hr class="dropdown-divider">
+                  <div class="dropdown-item">
+                    <small class="has-text-grey">
+                      Share this link to let others add their availability
+                    </small>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
+          {#if shareLinkCopied}
+            <div class="mt-2">
+              <p class="has-text-success is-size-7">✓ Shareable link copied to clipboard!</p>
+            </div>
+          {/if}
         </div>
-        {#if shareLinkCopied}
-          <div class="mt-2">
-            <p class="has-text-success is-size-7">✓ Shareable link copied to clipboard!</p>
+      {:else if meetingName.trim()}
+        <div class="notification is-info is-light mt-4">
+          <div class="is-flex is-align-items-center is-flex-wrap-wrap" style="gap: 0.5rem;">
+            <span><strong>💡 Tip:</strong> Create a meeting to get a shareable link!</span>
           </div>
-        {/if}
-      </div>
-    {:else if meetingName.trim()}
-      <div class="notification is-info is-light mt-4">
-        <div class="is-flex is-align-items-center is-flex-wrap-wrap" style="gap: 0.5rem;">
-          <span><strong>💡 Tip:</strong> Save your meeting to get a shareable link!</span>
+        </div>
+      {/if}
+    </div>
+    
+    {#if meetingId && !meetingError}
+      <div class="columns">
+        <div class="column is-6" style="max-width: 100%; overflow-x: hidden;">
+          <div class="box">
+            <h3 class="title is-5">Your Information</h3>
+            
+            {#if currentParticipant}
+              <ParticipantCard 
+                participant={currentParticipant}
+                onUpdate={updateMyParticipant}
+                onRemove={removeMyParticipation}
+              />
+            {:else}
+              <div class="notification is-info">
+                <p>You haven't added your availability yet. Fill out the form below to join this meeting.</p>
+              </div>
+              <ParticipantCard 
+                participant={{ name: '', city: '', timezone: '', offset: 0, timeslots: [] }}
+                onUpdate={updateMyParticipant}
+                onRemove={() => {}}
+              />
+            {/if}
+          </div>
+          
+          <div class="box">
+            <h3 class="title is-5">All Participants ({allParticipants.length})</h3>
+            {#if allParticipants.length > 0}
+              {#each allParticipants as participant}
+                <div class="notification is-light">
+                  <div class="level">
+                    <div class="level-left">
+                      <div class="level-item">
+                        <div>
+                          <p class="title is-6">{participant.name}</p>
+                          <p class="subtitle is-7">{participant.city} (UTC{participant.timezone_offset >= 0 ? '+' : ''}{participant.timezone_offset})</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              {/each}
+            {:else}
+              <p class="has-text-grey">No participants yet. Be the first to join!</p>
+            {/if}
+          </div>
+        </div>
+        
+        <div class="column is-6" style="min-width: 0;">
+          <div style="position: sticky; top: 20px; max-width: 100%;">
+            <MatchResults participants={allParticipants} />
+          </div>
         </div>
       </div>
     {/if}
-  </div>
-  
-  <div class="columns">
-    <div class="column is-6" style="max-width: 100%; overflow-x: hidden;">
-      <div class="mb-4">
-        <button class="button is-success" onclick={(e) => { e.preventDefault(); addParticipant(); }}>
-          + Add Participant
-        </button>
-      </div>
-      
-      {#each participants as participant, index}
-        <ParticipantCard 
-          {participant}
-          onUpdate={(updated) => updateParticipant(index, updated)}
-          onRemove={() => removeParticipant(index)}
-        />
-      {/each}
-    </div>
-    
-    <div class="column is-6" style="min-width: 0;">
-      <div style="position: sticky; top: 20px; max-width: 100%;">
-        <MatchResults {participants} />
-      </div>
-    </div>
-  </div>
+  {/if}
 </div>
-
-
