@@ -1,0 +1,113 @@
+// Test the specific case reported by user: same timezone, overlapping times, no match found
+import { findMatches } from './src/lib/timeMatch.js';
+
+console.log('=== DEBUGGING USER SPECIFIC CASE ===');
+console.log('Meeting ID: b3021773-f760-4824-a7ac-75b338dffa77');
+console.log('Issue: User A and User B both in New York timezone, overlapping Monday times, but no match found');
+
+// User's exact scenario
+const userScenario = [
+  {
+    name: 'User A',
+    city: 'New York',
+    timezone: 'America/New_York',
+    timezone_offset: -5,
+    offset: -5,
+    timeslots: [
+      {
+        day: 'Monday',
+        start: '9:00 AM',
+        end: '4:00 PM'
+      }
+    ]
+  },
+  {
+    name: 'User B',
+    city: 'New York', 
+    timezone: 'America/New_York',
+    timezone_offset: -5,
+    offset: -5,
+    timeslots: [
+      {
+        day: 'Monday',
+        start: '12:00 PM',
+        end: '7:00 PM'
+      }
+    ]
+  }
+];
+
+console.log('\nParticipant details:');
+console.log('User A: Monday 9:00 AM - 4:00 PM (New York, UTC-5)');
+console.log('User B: Monday 12:00 PM - 7:00 PM (New York, UTC-5)');
+console.log('Expected overlap: Monday 12:00 PM - 4:00 PM (4 hours)');
+
+console.log('\n=== RUNNING MATCH ANALYSIS ===');
+
+const matches = findMatches(userScenario);
+console.log(`\nMatches found: ${matches.length}`);
+
+if (matches.length === 0) {
+  console.log('❌ BUG CONFIRMED: No matches found despite clear overlap!');
+  console.log('This should be a perfect 2/2 match.');
+} else {
+  console.log('✅ Matches found:');
+  matches.forEach((match, index) => {
+    console.log(`\nMatch ${index + 1}:`);
+    console.log(`  Day: ${match.day}`);
+    console.log(`  Match Quality: ${match.matchCount}/${match.totalCount}`);
+    console.log(`  UTC Time: ${match.utcStart} - ${match.utcEnd}`);
+    console.log(`  Local Time: ${match.start} - ${match.end}`);
+    
+    console.log('  Available participants:');
+    match.available.forEach(person => {
+      console.log(`    ${person.name}: ${person.originalStart} - ${person.originalEnd}`);
+    });
+  });
+}
+
+// Manual time conversion check to debug
+console.log('\n=== MANUAL TIME CONVERSION DEBUG ===');
+
+function parseTime(time) {
+  const match = time.match(/(\d+):(\d+)\s*(AM|PM)/i);
+  if (!match) return [0, 0, 'AM'];
+  return [parseInt(match[1]), parseInt(match[2]), match[3].toUpperCase()];
+}
+
+function timeToUTCMinutes(time, offset, day) {
+  const [hours, minutes, period] = parseTime(time);
+  let totalMinutes = hours * 60 + minutes;
+  if (period === 'PM' && hours !== 12) totalMinutes += 12 * 60;
+  if (period === 'AM' && hours === 12) totalMinutes -= 12 * 60;
+  
+  // Convert to UTC by subtracting offset
+  totalMinutes -= offset * 60;
+  
+  return { minutes: totalMinutes, day };
+}
+
+console.log('User A timeslot:');
+const userAStart = timeToUTCMinutes('9:00 AM', -5, 'Monday');
+const userAEnd = timeToUTCMinutes('4:00 PM', -5, 'Monday');
+console.log(`  9:00 AM -> UTC: ${userAStart.minutes} minutes`);
+console.log(`  4:00 PM -> UTC: ${userAEnd.minutes} minutes`);
+console.log(`  UTC range: ${userAStart.minutes} - ${userAEnd.minutes}`);
+
+console.log('\nUser B timeslot:');
+const userBStart = timeToUTCMinutes('12:00 PM', -5, 'Monday');
+const userBEnd = timeToUTCMinutes('7:00 PM', -5, 'Monday');
+console.log(`  12:00 PM -> UTC: ${userBStart.minutes} minutes`);
+console.log(`  7:00 PM -> UTC: ${userBEnd.minutes} minutes`);
+console.log(`  UTC range: ${userBStart.minutes} - ${userBEnd.minutes}`);
+
+console.log('\nOverlap check:');
+const overlapStart = Math.max(userAStart.minutes, userBStart.minutes);
+const overlapEnd = Math.min(userAEnd.minutes, userBEnd.minutes);
+console.log(`  Overlap range: ${overlapStart} - ${overlapEnd} minutes`);
+console.log(`  Has overlap: ${overlapStart < overlapEnd}`);
+
+if (overlapStart < overlapEnd) {
+  const overlapHours = (overlapEnd - overlapStart) / 60;
+  console.log(`  Overlap duration: ${overlapHours} hours`);
+}

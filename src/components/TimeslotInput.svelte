@@ -1,14 +1,69 @@
 <script>
   let { participant, onUpdate } = $props();
   
-  const days = ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'];
+  const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
   const hours = Array.from({ length: 24 }, (_, i) => i);
   
-  let newDay = $state('MONDAY');
+  let newDay = $state('Monday');
   let newStart = $state('9:00 AM');
   let newEnd = $state('10:00 AM');
   
+  function formatTime(hour) {
+    const h = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+    const period = hour >= 12 ? 'PM' : 'AM';
+    return `${h}:00 ${period}`;
+  }
+  
+  // Auto-update end time when start time changes
+  $effect(() => {
+    newStart; // Track dependency
+    const startHour = hours.find(h => formatTime(h) === newStart);
+    if (startHour !== undefined) {
+      const endHour = (startHour + 1) % 24;
+      newEnd = formatTime(endHour);
+    }
+  });
+  
   function addTimeslot() {
+    // Validate start < end time
+    const parseTime = (timeStr) => {
+      const match = timeStr.match(/(\d+):(\d+)\s*(AM|PM)/i);
+      if (!match) return null;
+      let hours = parseInt(match[1]);
+      const minutes = parseInt(match[2]);
+      const period = match[3].toUpperCase();
+      
+      if (period === 'PM' && hours !== 12) hours += 12;
+      if (period === 'AM' && hours === 12) hours = 0;
+      
+      return hours * 60 + minutes;
+    };
+
+    const startMinutes = parseTime(newStart);
+    const endMinutes = parseTime(newEnd);
+
+    if (startMinutes === null || endMinutes === null) {
+      alert('Invalid time format');
+      return;
+    }
+
+    // Allow cross-midnight slots by computing wrapped duration (e.g., 11 PM to 1 AM)
+    const duration = (endMinutes - startMinutes + 24 * 60) % (24 * 60);
+    if (duration === 0) {
+      alert('End time must differ from start time');
+      return;
+    }
+
+    // Check for duplicates
+    const isDuplicate = participant.timeslots?.some(slot =>
+      slot.day === newDay && slot.start === newStart && slot.end === newEnd
+    );
+
+    if (isDuplicate) {
+      alert('This timeslot already exists');
+      return;
+    }
+
     const timeslots = [...(participant.timeslots || []), {
       day: newDay,
       start: newStart,
@@ -20,12 +75,6 @@
   function removeTimeslot(index) {
     const timeslots = participant.timeslots.filter((_, i) => i !== index);
     onUpdate({ ...participant, timeslots });
-  }
-  
-  function formatTime(hour) {
-    const h = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
-    const period = hour >= 12 ? 'PM' : 'AM';
-    return `${h}:00 ${period}`;
   }
 </script>
 

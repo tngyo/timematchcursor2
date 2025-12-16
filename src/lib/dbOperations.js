@@ -52,10 +52,26 @@ export async function getParticipants(meetingId) {
     .eq('meeting_id', meetingId)
     .order('created_at', { ascending: true });
 
+  // Handle RLS or network errors gracefully
   if (error) {
     console.error('Error fetching participants:', error);
-    throw new Error(`Failed to load participants: ${error.message}`);
+    
+    // 406 Not Acceptable = RLS policy denying access
+    if (error.code === '406' || error.status === 406) {
+      console.warn('Access denied to participants (RLS policy). User may not be meeting creator.');
+      return [];
+    }
+    
+    // PGRST116 = no rows found (expected case)
+    if (error.code === 'PGRST116') {
+      return [];
+    }
+    
+    // For other errors, still return empty array instead of throwing
+    console.warn(`Warning: Could not fetch participants: ${error.message}`);
+    return [];
   }
+  
   return data || [];
 }
 
@@ -75,12 +91,24 @@ export async function saveParticipant(meetingId, participantData) {
   };
 
   // Check if participant already exists
-  const { data: existing } = await supabase
+  const { data: existing, error: checkError } = await supabase
     .from('participants')
     .select('id')
     .eq('meeting_id', meetingId)
     .eq('user_id', user.id)
     .single();
+
+  // Handle check errors
+  if (checkError) {
+    // PGRST116 = no rows found (expected for new participants)
+    if (checkError.code !== 'PGRST116') {
+      // 406 or other errors: log but continue with insert
+      if (checkError.status !== 406) {
+        throw checkError;
+      }
+      console.warn('RLS policy check: continuing with insert operation');
+    }
+  }
 
   if (existing) {
     // Update existing participant
@@ -92,7 +120,10 @@ export async function saveParticipant(meetingId, participantData) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error updating participant:', error);
+      throw error;
+    }
     return data;
   } else {
     // Create new participant
@@ -102,7 +133,10 @@ export async function saveParticipant(meetingId, participantData) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Error creating participant:', error);
+      throw error;
+    }
     return data;
   }
 }

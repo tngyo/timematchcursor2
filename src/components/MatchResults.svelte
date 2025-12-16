@@ -107,17 +107,31 @@
               <div class="content" style="overflow-x: auto;">
                 <pre style="background: transparent; border: none; padding: 0; margin: 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>
                 {#each bestMatch.available as person}
-                  <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
-    {person.name.padEnd(20)} ({person.city} {getOffsetLabel(person.offset)})    {person.originalStart} - {person.originalEnd} ✓ (Overlap: {bestMatch.day} {person.localStartTime} - {person.localEndTime})
-                  </p>
+                  {#if person.allSlots && person.allSlots.length > 0}
+                    {#each person.allSlots as slot}
+                      <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
+    {person.name.padEnd(20)} ({person.city} {getOffsetLabel(person.offset)})    {slot.start} - {slot.end} ✓
+                      </p>
+                    {/each}
+                  {:else}
+                    <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
+    {person.name.padEnd(20)} ({person.city} {getOffsetLabel(person.offset)})    {person.originalStart} - {person.originalEnd} ✓
+                    </p>
+                  {/if}
                 {/each}
                 <pre style="background: transparent; border: none; padding: 0; margin: 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>
-              </div>
+                 <p style="margin: 1rem 0 0.5rem 0; font-weight: bold;">Meeting time (in each participant's local time):</p>
+                 {#each bestMatch.available as person}
+                   <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
+     {person.name.padEnd(20)}: {bestMatch.day} {person.localStartTime} - {person.localEndTime}
+                   </p>
+                 {/each}
+               </div>
             </div>
           {:else}
             <div class="notification is-warning is-light">
               <p class="is-size-5 has-text-weight-bold">
-                ⚠️ {bestMatch.day} - {bestMatch.matchCount} OUT OF {bestMatch.totalCount}
+                ⚠️ {bestMatch.day} - {bestMatch.matchCount} OUT OF {bestMatch.totalCount} PARTICIPANTS
               </p>
               <p class="mb-3 has-text-weight-semibold">
                 Available times: Each participant's local time
@@ -125,9 +139,17 @@
               <div class="content" style="overflow-x: auto;">
                 <pre style="background: transparent; border: none; padding: 0; margin: 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>
                 {#each bestMatch.available as person}
-                  <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
-    {person.name.padEnd(20)} ({person.city} {getOffsetLabel(person.offset)})    {person.originalStart} - {person.originalEnd} ✓ (Overlap: {bestMatch.day} {person.localStartTime} - {person.localEndTime})
-                  </p>
+                  {#if person.allSlots && person.allSlots.length > 0}
+                    {#each person.allSlots as slot}
+                      <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
+    {person.name.padEnd(20)} ({person.city} {getOffsetLabel(person.offset)})    {slot.start} - {slot.end} ✓
+                      </p>
+                    {/each}
+                  {:else}
+                    <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
+    {person.name.padEnd(20)} ({person.city} {getOffsetLabel(person.offset)})    {person.originalStart} - {person.originalEnd} ✓
+                    </p>
+                  {/if}
                 {/each}
                 {#each bestMatch.unavailable as person}
                   <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
@@ -135,7 +157,13 @@
                   </p>
                 {/each}
                 <pre style="background: transparent; border: none; padding: 0; margin: 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━</pre>
-              </div>
+                 <p style="margin: 1rem 0 0.5rem 0; font-weight: bold;">Meeting time (in each participant's local time):</p>
+                 {#each bestMatch.available as person}
+                   <p style="margin: 0.5rem 0; font-family: monospace; white-space: pre-wrap; word-break: break-all;">
+     {person.name.padEnd(20)}: {bestMatch.day} {person.localStartTime} - {person.localEndTime}
+                   </p>
+                 {/each}
+               </div>
             </div>
           {/if}
         </div>

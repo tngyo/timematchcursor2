@@ -1,10 +1,11 @@
 import { convertTime } from './timezones.js';
 
-// Convert time to UTC minutes (simple conversion without day boundaries)
-function timeToUTCMinutes(time, offset, day) {
-  // Handle invalid inputs
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+// Convert time to UTC minutes with normalized day index to preserve actual UTC day.
+function timeToUTCMinutes(time, offset, dayIndex) {
   if (!time || offset === null || offset === undefined || isNaN(offset)) {
-    return { minutes: 0, day: day || 'Monday' };
+    return { minutes: 0, dayIndex: Number.isInteger(dayIndex) ? dayIndex % 7 : 0 };
   }
   
   const [hours, minutes, period] = parseTime(time);
@@ -12,22 +13,29 @@ function timeToUTCMinutes(time, offset, day) {
   if (period === 'PM' && hours !== 12) totalMinutes += 12 * 60;
   if (period === 'AM' && hours === 12) totalMinutes -= 12 * 60;
   
-  // Convert to UTC by subtracting offset (allow negative values)
   totalMinutes -= offset * 60;
   
-  return { minutes: totalMinutes, day };
+  let normalizedDayIndex = Number.isInteger(dayIndex) ? dayIndex : 0;
+  while (totalMinutes < 0) {
+    totalMinutes += 24 * 60;
+    normalizedDayIndex = (normalizedDayIndex + 6) % 7;
+  }
+  while (totalMinutes >= 24 * 60) {
+    totalMinutes -= 24 * 60;
+    normalizedDayIndex = (normalizedDayIndex + 1) % 7;
+  }
+  
+  return { minutes: totalMinutes, dayIndex: normalizedDayIndex };
 }
 
 function getNextDay(day) {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const currentIndex = days.indexOf(day);
-  return days[(currentIndex + 1) % 7];
+  const currentIndex = DAYS.indexOf(day);
+  return DAYS[(currentIndex + 1) % 7];
 }
 
 function getPreviousDay(day) {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  const currentIndex = days.indexOf(day);
-  return days[(currentIndex - 1 + 7) % 7];
+  const currentIndex = DAYS.indexOf(day);
+  return DAYS[(currentIndex - 1 + 7) % 7];
 }
 
 // Convert UTC minutes back to local time string
@@ -38,7 +46,7 @@ function utcMinutesToTime(utcMinutes, offset) {
     return '12:00 AM'; // Default to midnight
   }
   
-  // Convert UTC to local by adding offset
+  // Convert UTC to local by adding offset (handle decimal offsets)
   let localMinutes = utcMinutes + (offset * 60);
   
   // Normalize to 0-1440 range
@@ -46,7 +54,7 @@ function utcMinutesToTime(utcMinutes, offset) {
   while (localMinutes >= 24 * 60) localMinutes -= 24 * 60;
   
   const hours = Math.floor(localMinutes / 60) % 24;
-  const mins = Math.floor(localMinutes % 60);
+  const mins = Math.round(localMinutes % 60); // Round to nearest minute for decimal offsets
   const period = hours >= 12 ? 'PM' : 'AM';
   const displayHours = hours === 0 ? 12 : hours > 12 ? hours - 12 : hours;
   
@@ -69,20 +77,18 @@ function slotsOverlap(slot1, offset1, slot2, offset2) {
 }
 
 export function timeRangeToUTC(startTime, endTime, offset, day) {
-  const startUTC = timeToUTCMinutes(startTime, offset, day);
-  const endUTC = timeToUTCMinutes(endTime, offset, day);
+  const dayIndex = getDayIndex(day);
+  const startUTC = timeToUTCMinutes(startTime, offset, dayIndex);
+  const endUTC = timeToUTCMinutes(endTime, offset, dayIndex);
   
-  // For simplicity, assume all times are on the same conceptual day
-  // Handle end time that might be before start time (crosses midnight)
-  let endMinutes = endUTC.minutes;
-  let startMinutes = startUTC.minutes;
+  let startAbs = startUTC.dayIndex * 24 * 60 + startUTC.minutes;
+  let endAbs = endUTC.dayIndex * 24 * 60 + endUTC.minutes;
   
-  if (endMinutes < startMinutes) {
-    // End time is on the next day
-    endMinutes += 24 * 60;
+  if (endAbs <= startAbs) {
+    endAbs += 24 * 60;
   }
   
-  return { start: startMinutes, end: endMinutes, day: startUTC.day };
+  return { start: startAbs, end: endAbs, dayIndex: startUTC.dayIndex, day: DAYS[startUTC.dayIndex] };
 }
 
 function isNextDay(day, referenceDay) {
@@ -93,30 +99,11 @@ function isNextDay(day, referenceDay) {
 }
 
 export function rangesOverlap(range1, range2) {
-  // Handle ranges that might have negative start times
-  // Normalize ranges to handle cross-day scenarios
-  
-  // If both ranges have negative starts, adjust them
-  let adjRange1 = { ...range1 };
-  let adjRange2 = { ...range2 };
-  
-  // Handle negative start times by adding 24*60
-  if (adjRange1.start < 0) {
-    adjRange1.start += 24 * 60;
-    adjRange1.end += 24 * 60;
-  }
-  if (adjRange2.start < 0) {
-    adjRange2.start += 24 * 60;
-    adjRange2.end += 24 * 60;
-  }
-  
-  // Now check for overlap
-  return adjRange1.start < adjRange2.end && adjRange2.start < adjRange1.end;
+  return range1.start < range2.end && range2.start < range1.end;
 }
 
 export function getDayIndex(day) {
-  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-  return days.indexOf(day);
+  return DAYS.indexOf(day);
 }
 
 export function calculateOverlap(range1, range2) {
@@ -124,32 +111,20 @@ export function calculateOverlap(range1, range2) {
     return null;
   }
   
-  // Handle ranges that might have negative start times
-  let adjRange1 = { ...range1 };
-  let adjRange2 = { ...range2 };
-  
-  // Handle negative start times by adding 24*60
-  if (adjRange1.start < 0) {
-    adjRange1.start += 24 * 60;
-    adjRange1.end += 24 * 60;
-  }
-  if (adjRange2.start < 0) {
-    adjRange2.start += 24 * 60;
-    adjRange2.end += 24 * 60;
-  }
-  
-  // Calculate intersection of adjusted ranges
-  const overlapStart = Math.max(adjRange1.start, adjRange2.start);
-  const overlapEnd = Math.min(adjRange1.end, adjRange2.end);
+  const overlapStart = Math.max(range1.start, range2.start);
+  const overlapEnd = Math.min(range1.end, range2.end);
   
   if (overlapStart >= overlapEnd) {
-    return null; // No actual overlap
+    return null;
   }
+  
+  const dayIndex = Math.floor(overlapStart / (24 * 60)) % 7;
   
   return {
     start: overlapStart,
     end: overlapEnd,
-    day: range1.day
+    dayIndex,
+    day: DAYS[dayIndex]
   };
 }
 
@@ -159,102 +134,115 @@ export function findMatches(participants) {
     p.name && p.city && p.timeslots && p.timeslots.length > 0
   );
   
-  if (validParticipants.length < 1) return [];
+  // Need at least 2 participants for a meaningful match
+  if (validParticipants.length < 2) return [];
   
-  // Collect all time slots with their UTC ranges
-  const allSlots = [];
+  const slotsByUtcDay = new Map();
+  
   validParticipants.forEach(participant => {
-    const offset = participant.offset || participant.timezone_offset || 0; // Handle both property names
+    const offset = participant.offset || participant.timezone_offset || 0;
     participant.timeslots.forEach(slot => {
+      if (!slot?.day || !slot?.start || !slot?.end) return;
+      if (slot.start === slot.end) return;
+      
       const utcRange = timeRangeToUTC(slot.start, slot.end, offset, slot.day);
-      allSlots.push({
-        slot,
-        participant,
-        utcRange
-      });
+      const dayKey = Math.floor(utcRange.start / (24 * 60));
+      const entry = { slot, participant, offset, utcRange };
+      
+      if (!slotsByUtcDay.has(dayKey)) {
+        slotsByUtcDay.set(dayKey, []);
+      }
+      slotsByUtcDay.get(dayKey).push(entry);
     });
   });
   
-  // Group slots by overlapping UTC time ranges
-  const slotGroups = [];
-  const processed = new Set();
-  
-  allSlots.forEach((item, index) => {
-    if (processed.has(index)) return;
+  slotsByUtcDay.forEach((daySlots) => {
+    if (daySlots.length === 0) return;
     
-    const group = [item];
-    processed.add(index);
+    const allSlots = daySlots.map(item => ({ ...item }));
+    const slotGroups = [];
+    const processed = new Set();
     
-    // Find all other slots that overlap with this one
-    allSlots.forEach((otherItem, otherIndex) => {
-      if (index === otherIndex || processed.has(otherIndex)) return;
+    allSlots.forEach((item, index) => {
+      if (processed.has(index)) return;
       
-      if (rangesOverlap(item.utcRange, otherItem.utcRange)) {
-        group.push(otherItem);
-        processed.add(otherIndex);
-      }
-    });
-    
-    if (group.length > 0) {
-      slotGroups.push(group);
-    }
-  });
-  
-  // Create matches from groups
-  slotGroups.forEach((group) => {
-    if (group.length === 0) return;
-    
-    // Calculate the actual overlap time range
-    let overlapRange = group[0].utcRange;
-    for (let i = 1; i < group.length; i++) {
-      overlapRange = calculateOverlap(overlapRange, group[i].utcRange);
-      if (!overlapRange) break; // No overlap found
-    }
-    
-    if (!overlapRange) return;
-    
-    const available = [];
-    const unavailable = [];
-    
-    // Check each participant
-    validParticipants.forEach(participant => {
-      const hasSlot = group.some(item => item.participant.name === participant.name);
+      const group = [item];
+      processed.add(index);
       
-      if (hasSlot) {
-        const item = group.find(i => i.participant.name === participant.name);
-        available.push({
-          name: participant.name,
-          city: participant.city,
-          timezone: participant.timezone,
-          offset: participant.offset || participant.timezone_offset || 0,
-          localStartTime: utcMinutesToTime(overlapRange.start, participant.offset || participant.timezone_offset || 0),
-          localEndTime: utcMinutesToTime(overlapRange.end, participant.offset || participant.timezone_offset || 0),
-          originalStart: item.slot.start,
-          originalEnd: item.slot.end
-        });
-      } else {
-        unavailable.push({
-          name: participant.name,
-          city: participant.city,
-          timezone: participant.timezone,
-          offset: participant.offset || participant.timezone_offset || 0
-        });
-      }
-    });
-    
-    if (available.length > 0) {
-      matches.push({
-        day: group[0].slot.day,
-        utcStart: utcMinutesToTime(overlapRange.start, 0), // UTC time
-        utcEnd: utcMinutesToTime(overlapRange.end, 0), // UTC time
-        start: utcMinutesToTime(overlapRange.start, group[0].participant.offset || group[0].participant.timezone_offset || 0),
-        end: utcMinutesToTime(overlapRange.end, group[0].participant.offset || group[0].participant.timezone_offset || 0),
-        available: available,
-        unavailable,
-        matchCount: available.length,
-        totalCount: validParticipants.length
+      allSlots.forEach((otherItem, otherIndex) => {
+        if (index === otherIndex || processed.has(otherIndex)) return;
+        
+        if (rangesOverlap(item.utcRange, otherItem.utcRange)) {
+          group.push(otherItem);
+          processed.add(otherIndex);
+        }
       });
-    }
+      
+      if (group.length > 0) {
+        slotGroups.push(group);
+      }
+    });
+    
+    slotGroups.forEach((group) => {
+      if (group.length === 0) return;
+      
+      let overlapRange = group[0].utcRange;
+      for (let i = 1; i < group.length; i++) {
+        overlapRange = calculateOverlap(overlapRange, group[i].utcRange);
+        if (!overlapRange) break;
+      }
+      
+      if (!overlapRange) return;
+      
+      const available = [];
+      const unavailable = [];
+      const overlapDayIndex = Math.floor(overlapRange.start / (24 * 60)) % 7;
+      const overlapDayName = DAYS[overlapDayIndex];
+      const overlapStartMod = overlapRange.start % (24 * 60);
+      const overlapEndMod = overlapRange.end % (24 * 60);
+      
+      validParticipants.forEach(participant => {
+        const hasSlot = group.some(item => item.participant.name === participant.name);
+        const participantOffset = participant.offset || participant.timezone_offset || 0;
+        
+        if (hasSlot) {
+          const item = group.find(i => i.participant.name === participant.name);
+          const personData = {
+            name: participant.name,
+            city: participant.city,
+            timezone: participant.timezone,
+            offset: participantOffset,
+            localStartTime: utcMinutesToTime(overlapStartMod, participantOffset),
+            localEndTime: utcMinutesToTime(overlapEndMod, participantOffset),
+            originalStart: item.slot.start,
+            originalEnd: item.slot.end,
+            allSlots: participant.timeslots ? Array.from(participant.timeslots) : []
+          };
+          available.push(personData);
+        } else {
+          unavailable.push({
+            name: participant.name,
+            city: participant.city,
+            timezone: participant.timezone,
+            offset: participantOffset
+          });
+        }
+      });
+      
+      if (available.length >= 2) {
+        matches.push({
+          day: overlapDayName,
+          utcStart: utcMinutesToTime(overlapStartMod, 0),
+          utcEnd: utcMinutesToTime(overlapEndMod, 0),
+          start: utcMinutesToTime(overlapStartMod, group[0].participant.offset || group[0].participant.timezone_offset || 0),
+          end: utcMinutesToTime(overlapEndMod, group[0].participant.offset || group[0].participant.timezone_offset || 0),
+          available,
+          unavailable,
+          matchCount: available.length,
+          totalCount: validParticipants.length
+        });
+      }
+    });
   });
   
   // Sort matches: perfect matches first, then by match count
@@ -266,4 +254,3 @@ export function findMatches(participants) {
   
   return matches;
 }
-
